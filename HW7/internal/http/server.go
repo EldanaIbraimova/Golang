@@ -2,94 +2,44 @@ package http
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"HW7/internal/models"
+	"HW7/internal/cache"
+	"HW7/internal/http/resources"
 	"HW7/internal/store"
 	"log"
 	"net/http"
-	"strconv"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi"
-	"github.com/go-chi/render"
 )
 
 type Server struct {
 	ctx         context.Context
 	idleConnsCh chan struct{}
-	store       store.Store
+	store       store.FactsRepository
 
+	cache   cache.Cache
 	Address string
 }
 
-func NewServer(ctx context.Context, address string, store store.Store) *Server {
-	return &Server{
+func NewServer(ctx context.Context, opts ...ServerOption) *Server {
+	srv := &Server{
 		ctx:         ctx,
 		idleConnsCh: make(chan struct{}),
-		store:       store,
-
-		Address: address,
 	}
+
+	for _, opt := range opts {
+		opt(srv)
+	}
+
+	return srv
 }
 
 func (s *Server) basicHandler() chi.Router {
 	r := chi.NewRouter()
 
-
-	// Games
-	r.Post("/facts", func(w http.ResponseWriter, r *http.Request) {
-		fact := new(models.Fact)
-		if err := json.NewDecoder(r.Body).Decode(fact); err != nil {
-			fmt.Fprintf(w, "Unknown err: %v", err)
-			return
-		}
-
-		s.store.Facts().Create(r.Context(), fact)
-	})
-	r.Get("/facts", func(w http.ResponseWriter, r *http.Request) {
-		facts, err := s.store.Facts().All(r.Context())
-		if err != nil {
-			fmt.Fprintf(w, "Unknown err: %v", err)
-			return
-		}
-
-		render.JSON(w, r, facts)
-	})
-	r.Get("/facts/{id}", func(w http.ResponseWriter, r *http.Request) {
-		idStr := chi.URLParam(r, "id")
-		id, err := strconv.Atoi(idStr)
-		if err != nil {
-			fmt.Fprintf(w, "Unknown err: %v", err)
-			return
-		}
-		fact, err := s.store.Facts().ByID(r.Context(), id)
-		if err != nil {
-			fmt.Fprintf(w, "Unknown err: %v", err)
-			return
-		}
-		render.JSON(w, r, fact)
-	})
-	r.Put("/facts", func(w http.ResponseWriter, r *http.Request) {
-		fact := new(models.Fact)
-		if err := json.NewDecoder(r.Body).Decode(fact); err != nil {
-			fmt.Fprintf(w, "Unknown err: %v", err)
-			return
-		}
-
-		s.store.Facts().Update(r.Context(), fact)
-	})
-	r.Delete("/facts/{id}", func(w http.ResponseWriter, r *http.Request) {
-		idStr := chi.URLParam(r, "id")
-		id, err := strconv.Atoi(idStr)
-
-		if err != nil {
-			fmt.Fprintf(w, "Unknown err: %v", err)
-			return
-		}
-
-		s.store.Facts().Delete(r.Context(), id)
-	})
+	factsResource := resources.NewFactsResource(s.store, s.cache)
+	r.Mount("/facts", factsResource.Routes())
 
 	return r
 }
@@ -120,4 +70,5 @@ func (s *Server) ListenCtxForGT(srv *http.Server) {
 
 func (s *Server) WaitForGracefulTermination() {
 	<-s.idleConnsCh
+	os.RemoveAll("./tmp")
 }
